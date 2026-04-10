@@ -1,38 +1,43 @@
 import SwiftUI
 
-struct ContentView: View {
-    var body: some View {
-        NavigationStack {
-            TodayView()
-                .background(Color(.systemGroupedBackground))
-        }
-    }
+private struct LoggedMealEntry: Identifiable {
+    let id = UUID()
+    let meal: MealItem
+    let addedAt: Date
 }
 
-private struct MealItem: Identifiable, Hashable {
-    let id = UUID()
-    let name: String
-    let calories: Int
-    let carbs: Int
-    let protein: Int
-    let fats: Int
+struct ContentView: View {
+    @State private var loggedMeals: [LoggedMealEntry] = []
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(.systemGroupedBackground)
+                    .ignoresSafeArea()
+
+                TodayView(loggedMeals: loggedMeals) { newMeals in
+                    let timestamp = Date()
+                    loggedMeals.append(
+                        contentsOf: newMeals.map {
+                            LoggedMealEntry(meal: $0, addedAt: timestamp)
+                        }
+                    )
+                }
+            }
+        }
+        .preferredColorScheme(.light)
+    }
 }
 
 private struct AddMealView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedMeals: [MealItem] = []
 
-    private let favoriteMeals = [
-        MealItem(name: "Favorite 1", calories: 620, carbs: 55, protein: 42, fats: 18),
-        MealItem(name: "Favorite 2", calories: 510, carbs: 40, protein: 36, fats: 21)
-    ]
-
-    private let recentMeals = [
-        MealItem(name: "Last Tracked", calories: 700, carbs: 68, protein: 38, fats: 20),
-        MealItem(name: "Last Tracked", calories: 540, carbs: 45, protein: 34, fats: 17)
-    ]
+    private let meals = SampleMeals.items
+    let onDone: ([MealItem]) -> Void
 
     var body: some View {
-        ScrollView {
+        VStack(alignment: .leading, spacing: 28) {
             VStack(alignment: .leading, spacing: 28) {
                 Text("Add Meal")
                     .font(.system(size: 34, weight: .medium))
@@ -40,64 +45,101 @@ private struct AddMealView: View {
                     .padding(.top, 8)
 
                 searchBar
-
-                VStack(alignment: .leading, spacing: 20) {
-                    ForEach(favoriteMeals) { meal in
-                        NavigationLink {
-                            MealDetailView(meal: meal)
-                        } label: {
-                            HStack(spacing: 16) {
-                                Image(systemName: "star")
-                                    .font(.title3)
-                                    .foregroundStyle(.black)
-                                Text(meal.name)
-                                    .font(.title3)
-                                    .foregroundStyle(.black)
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 24) {
-                    ForEach(recentMeals) { meal in
-                        NavigationLink {
-                            MealDetailView(meal: meal)
-                        } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Text("•")
-                                    .font(.title2)
-                                    .foregroundStyle(.black)
-                                Text(meal.name)
-                                    .font(.title3)
-                                    .foregroundStyle(.black)
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Done")
-                        .font(.title3)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .overlay(
-                            Rectangle()
-                                .stroke(Color.black, lineWidth: 1)
-                        )
-                }
-                .foregroundStyle(.black)
-                .padding(.top, 12)
-
-                Spacer(minLength: 20)
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 24)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(meals) { meal in
+                        NavigationLink {
+                            MealDetailView(meal: meal) {
+                                selectedMeals.append(
+                                    MealItem(
+                                        name: meal.name,
+                                        calories: meal.calories,
+                                        carbs: meal.carbs,
+                                        protein: meal.protein,
+                                        fats: meal.fats
+                                    )
+                                )
+                            }
+                        } label: {
+                            HStack(spacing: 16) {
+                                Text(meal.name)
+                                    .font(.title3)
+                                    .foregroundStyle(.black)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(Color.white.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.black.opacity(0.035), lineWidth: 1)
+                            )
+                            .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 0)
+            }
         }
-        .navigationBarBackButtonHidden(true)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        Color(.systemGroupedBackground).opacity(0),
+                        Color(.systemGroupedBackground).opacity(0.92),
+                        Color(.systemGroupedBackground)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 16)
+
+                Button {
+                    onDone(selectedMeals)
+                    dismiss()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Done")
+                            .font(.title3)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .padding(.horizontal, 18)
+                            .foregroundStyle(.black)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                            )
+
+                        Text("\(addedMealsCount)")
+                            .font(.title3)
+                            .frame(width: 56, height: 56)
+                            .foregroundStyle(.black)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                            )
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 0)
+                .padding(.bottom, 0)
+                .background(Color(.systemGroupedBackground))
+            }
+        }
+    }
+
+    private var addedMealsCount: Int {
+        selectedMeals.count
     }
 
     private var searchBar: some View {
@@ -119,63 +161,150 @@ private struct AddMealView: View {
 }
 
 private struct TodayView: View {
+    let loggedMeals: [LoggedMealEntry]
+    let onAddMeals: ([MealItem]) -> Void
+
+    private let caloriesGoal = 2700
+    private let carbsGoal = 250
+    private let proteinGoal = 150
+    private let fatsGoal = 80
+
+    private var totalCalories: Int {
+        loggedMeals.reduce(0) { $0 + $1.meal.calories }
+    }
+
+    private var totalCarbs: Int {
+        loggedMeals.reduce(0) { $0 + $1.meal.carbs }
+    }
+
+    private var totalProtein: Int {
+        loggedMeals.reduce(0) { $0 + $1.meal.protein }
+    }
+
+    private var totalFats: Int {
+        loggedMeals.reduce(0) { $0 + $1.meal.fats }
+    }
+
+    private var remainingCalories: Int {
+        caloriesGoal - totalCalories
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Today")
-                    .font(.system(size: 36, weight: .medium))
-                Text("01.01.26")
-                    .font(.title3)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .bottom) {
+                    Text("Today")
+                        .font(.system(size: 36, weight: .medium))
+                    Spacer()
+                    Text("01.01.26")
+                        .font(.title3)
+                }
+
+                SummaryCard(
+                    title: "Calories",
+                    valueText: "\(remainingCalories)",
+                    subtitle: "Remaining",
+                    macros: [
+                        MacroStat(title: "Carbs", value: "\(totalCarbs)/\(carbsGoal)"),
+                        MacroStat(title: "Protein", value: "\(totalProtein)/\(proteinGoal)"),
+                        MacroStat(title: "Fats", value: "\(totalFats)/\(fatsGoal)")
+                    ]
+                )
+                .padding(.bottom, loggedMeals.isEmpty ? 0 : 4)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
 
-            SummaryCard(
-                title: "Calories",
-                valueText: "1000",
-                subtitle: "Remaining",
-                macros: [
-                    MacroStat(title: "Carbs", value: "0/100"),
-                    MacroStat(title: "Protein", value: "0/100"),
-                    MacroStat(title: "Fats", value: "0/100")
-                ]
-            )
+            if !loggedMeals.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("My Meals")
+                            .font(.system(size: 24, weight: .medium))
+                            .foregroundStyle(.black)
+                            .padding(.top, 8)
+                            .padding(.bottom, 4)
 
-            NavigationLink {
-                AddMealView()
-            } label: {
-                HStack(spacing: 0) {
-                    Text("+")
-                        .font(.title)
-                        .frame(width: 56, height: 56)
-                        .overlay(alignment: .trailing) {
-                            Rectangle()
-                                .fill(Color.black.opacity(0.12))
-                                .frame(width: 1)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(loggedMeals) { entry in
+                                HStack(spacing: 0) {
+                                    Text(entry.meal.name)
+                                        .font(.title3)
+                                        .foregroundStyle(.black)
+                                        .padding(.horizontal, 16)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                                    Rectangle()
+                                        .fill(Color.black.opacity(0.05))
+                                        .frame(width: 1, height: 32)
+
+                                    Text(timeString(for: entry.addedAt))
+                                        .font(.subheadline)
+                                        .foregroundStyle(Color.black.opacity(0.7))
+                                        .frame(width: 72)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 56)
+                                .background(Color.white.opacity(0.5))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.black.opacity(0.035), lineWidth: 1)
+                                )
+                                .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
+                            }
                         }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        Color(.systemGroupedBackground).opacity(0),
+                        Color(.systemGroupedBackground).opacity(0.92),
+                        Color(.systemGroupedBackground)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 16)
 
+                NavigationLink {
+                    AddMealView(onDone: onAddMeals)
+                } label: {
                     Text("Add Meal")
                         .font(.title3)
-                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: 56)
                         .padding(.horizontal, 18)
+                        .foregroundStyle(.black)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                        )
                 }
-                .foregroundStyle(.black)
-                .background(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.black.opacity(0.18), lineWidth: 1)
-                )
+                .padding(.horizontal, 20)
+                .background(Color(.systemGroupedBackground))
             }
-
-            Spacer()
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
-        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func timeString(for date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
     }
 }
 
 private struct MealDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+
     let meal: MealItem
+    let onAdd: () -> Void
 
     var body: some View {
         VStack(spacing: 32) {
@@ -196,17 +325,25 @@ private struct MealDetailView: View {
             )
 
             HStack(spacing: 0) {
-                Text("+")
-                    .font(.title2)
-                    .frame(width: 64, height: 64)
+                Button {
+                    onAdd()
+                    dismiss()
+                } label: {
+                    Text("+")
+                        .font(.title2)
+                        .frame(width: 64, height: 64)
+                        .foregroundStyle(.black)
+                }
 
                 Text("100")
                     .font(.title2)
                     .frame(width: 140, height: 64)
+                    .foregroundStyle(.black)
 
                 Text("g")
                     .font(.title2)
                     .frame(width: 96, height: 64)
+                    .foregroundStyle(.black)
             }
             .background(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -214,25 +351,30 @@ private struct MealDetailView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.black.opacity(0.18), lineWidth: 1)
             )
-            .overlay(alignment: .leading) {
+            .overlay {
                 HStack(spacing: 0) {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.12))
+                    Spacer()
                         .frame(width: 64)
                     Rectangle()
                         .fill(Color.black.opacity(0.12))
                         .frame(width: 1)
-                    Rectangle()
-                        .fill(Color.clear)
+                    Spacer()
                         .frame(width: 140)
+                    Rectangle()
+                        .fill(Color.black.opacity(0.12))
+                        .frame(width: 1)
+                    Spacer()
+                        .frame(width: 96)
                 }
             }
 
             Spacer()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.horizontal, 20)
         .padding(.top, 12)
         .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
     }
 }
 
@@ -266,7 +408,7 @@ private struct SummaryCard: View {
                         .font(.system(size: 48, weight: .medium))
                     if let subtitle {
                         Text(subtitle)
-                            .font(.title3)
+                            .font(.body)
                     }
                 }
             }
@@ -283,9 +425,9 @@ private struct SummaryCard: View {
                     VStack(spacing: 0) {
                         Text(macro.title)
                             .font(.title3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .center)
                         Text(macro.value)
-                            .font(.system(size: 26, weight: .medium))
+                            .font(.system(size: 22, weight: .medium))
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
                     .frame(
