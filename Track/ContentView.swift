@@ -3,7 +3,8 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         NavigationStack {
-            AddMealView()
+            TodayView()
+                .background(Color(.systemGroupedBackground))
         }
     }
 }
@@ -18,6 +19,8 @@ private struct MealItem: Identifiable, Hashable {
 }
 
 private struct AddMealView: View {
+    @Environment(\.dismiss) private var dismiss
+
     private let favoriteMeals = [
         MealItem(name: "Favorite 1", calories: 620, carbs: 55, protein: 42, fats: 18),
         MealItem(name: "Favorite 2", calories: 510, carbs: 40, protein: 36, fats: 21)
@@ -40,7 +43,9 @@ private struct AddMealView: View {
 
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(favoriteMeals) { meal in
-                        NavigationLink(value: meal) {
+                        NavigationLink {
+                            MealDetailView(meal: meal)
+                        } label: {
                             HStack(spacing: 16) {
                                 Image(systemName: "star")
                                     .font(.title3)
@@ -56,7 +61,9 @@ private struct AddMealView: View {
 
                 VStack(alignment: .leading, spacing: 24) {
                     ForEach(recentMeals) { meal in
-                        NavigationLink(value: meal) {
+                        NavigationLink {
+                            MealDetailView(meal: meal)
+                        } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Text("•")
                                     .font(.title2)
@@ -70,15 +77,27 @@ private struct AddMealView: View {
                     }
                 }
 
+                Button {
+                    dismiss()
+                } label: {
+                    Text("Done")
+                        .font(.title3)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .overlay(
+                            Rectangle()
+                                .stroke(Color.black, lineWidth: 1)
+                        )
+                }
+                .foregroundStyle(.black)
+                .padding(.top, 12)
+
                 Spacer(minLength: 20)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
         .navigationBarBackButtonHidden(true)
-        .navigationDestination(for: MealItem.self) { meal in
-            TodayView(meal: meal)
-        }
     }
 
     private var searchBar: some View {
@@ -91,16 +110,15 @@ private struct AddMealView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 16)
+        .background(Color.white)
         .overlay(
-            RoundedRectangle(cornerRadius: 0)
-                .stroke(Color.black, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.black.opacity(0.18), lineWidth: 1)
         )
     }
 }
 
 private struct TodayView: View {
-    let meal: MealItem
-
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
             VStack(alignment: .leading, spacing: 2) {
@@ -122,27 +140,30 @@ private struct TodayView: View {
             )
 
             NavigationLink {
-                MealDetailView(meal: meal)
+                AddMealView()
             } label: {
                 HStack(spacing: 0) {
                     Text("+")
                         .font(.title)
                         .frame(width: 56, height: 56)
-                        .overlay(
+                        .overlay(alignment: .trailing) {
                             Rectangle()
-                                .stroke(Color.black, lineWidth: 1)
-                        )
+                                .fill(Color.black.opacity(0.12))
+                                .frame(width: 1)
+                        }
 
                     Text("Add Meal")
                         .font(.title3)
                         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
                         .padding(.horizontal, 18)
-                        .overlay(
-                            Rectangle()
-                                .stroke(Color.black, lineWidth: 1)
-                        )
                 }
                 .foregroundStyle(.black)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                )
             }
 
             Spacer()
@@ -187,17 +208,22 @@ private struct MealDetailView: View {
                     .font(.title2)
                     .frame(width: 96, height: 64)
             }
+            .background(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
-                Rectangle()
-                    .stroke(Color.black, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.black.opacity(0.18), lineWidth: 1)
             )
             .overlay(alignment: .leading) {
                 HStack(spacing: 0) {
                     Rectangle()
-                        .stroke(Color.black, lineWidth: 1)
+                        .fill(Color.black.opacity(0.12))
                         .frame(width: 64)
                     Rectangle()
-                        .stroke(Color.black, lineWidth: 1)
+                        .fill(Color.black.opacity(0.12))
+                        .frame(width: 1)
+                    Rectangle()
+                        .fill(Color.clear)
                         .frame(width: 140)
                 }
             }
@@ -222,9 +248,17 @@ private struct SummaryCard: View {
     let subtitle: String?
     let macros: [MacroStat]
 
+    private var topSectionHeight: CGFloat {
+        subtitle == nil ? 150 : 170
+    }
+
+    private var macroSectionHeight: CGFloat {
+        subtitle == nil ? 82 : 92
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 18) {
+            VStack(spacing: 12) {
                 Text(title)
                     .font(.title2)
                 VStack(spacing: 8) {
@@ -237,36 +271,48 @@ private struct SummaryCard: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 24)
+            .frame(height: topSectionHeight)
+            .background(Color.white)
 
             Rectangle()
                 .frame(height: 1)
-                .foregroundStyle(.black)
+                .foregroundStyle(Color.black.opacity(0.12))
 
             HStack(spacing: 0) {
                 ForEach(Array(macros.enumerated()), id: \.element.id) { index, macro in
-                    VStack(alignment: .leading, spacing: 32) {
+                    VStack(spacing: 0) {
                         Text(macro.title)
                             .font(.title3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Text(macro.value)
-                            .font(.system(size: 28, weight: .medium))
+                            .font(.system(size: 26, weight: .medium))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: macroSectionHeight,
+                        maxHeight: macroSectionHeight,
+                        alignment: .topLeading
+                    )
                     .padding(.horizontal, 18)
-                    .padding(.vertical, 20)
+                    .padding(.vertical, 10)
 
                     if index < macros.count - 1 {
                         Rectangle()
                             .frame(width: 1)
-                            .foregroundStyle(.black)
+                            .foregroundStyle(Color.black.opacity(0.12))
                     }
                 }
             }
+            .frame(height: subtitle == nil ? 102 : 112)
+            .background(Color.white)
         }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
-            Rectangle()
-                .stroke(Color.black, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.black.opacity(0.18), lineWidth: 1)
         )
+        .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
     }
 }
 
