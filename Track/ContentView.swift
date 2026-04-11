@@ -15,14 +15,20 @@ struct ContentView: View {
                 Color(.systemGroupedBackground)
                     .ignoresSafeArea()
 
-                TodayView(loggedMeals: loggedMeals) { newMeals in
+                TodayView(
+                    loggedMeals: loggedMeals,
+                    onAddMeals: { newMeals in
                     let timestamp = Date()
                     loggedMeals.append(
                         contentsOf: newMeals.map {
                             LoggedMealEntry(meal: $0, addedAt: timestamp)
                         }
                     )
-                }
+                    },
+                    onDeleteMeal: { entry in
+                        loggedMeals.removeAll { $0.id == entry.id }
+                    }
+                )
             }
         }
         .preferredColorScheme(.light)
@@ -52,16 +58,8 @@ private struct AddMealView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(meals) { meal in
                         NavigationLink {
-                            MealDetailView(meal: meal) {
-                                selectedMeals.append(
-                                    MealItem(
-                                        name: meal.name,
-                                        calories: meal.calories,
-                                        carbs: meal.carbs,
-                                        protein: meal.protein,
-                                        fats: meal.fats
-                                    )
-                                )
+                            MealDetailView(meal: meal) { scaledMeal in
+                                selectedMeals.append(scaledMeal)
                             }
                         } label: {
                             HStack(spacing: 16) {
@@ -118,16 +116,18 @@ private struct AddMealView: View {
                                     .stroke(Color.black.opacity(0.18), lineWidth: 1)
                             )
 
-                        Text("\(addedMealsCount)")
-                            .font(.title3)
-                            .frame(width: 56, height: 56)
-                            .foregroundStyle(.black)
-                            .background(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.black.opacity(0.18), lineWidth: 1)
-                            )
+                        if addedMealsCount > 0 {
+                            Text("\(addedMealsCount)")
+                                .font(.title3)
+                                .frame(width: 56, height: 56)
+                                .foregroundStyle(.black)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                                )
+                        }
                     }
                 }
                 .padding(.horizontal, 20)
@@ -163,6 +163,7 @@ private struct AddMealView: View {
 private struct TodayView: View {
     let loggedMeals: [LoggedMealEntry]
     let onAddMeals: ([MealItem]) -> Void
+    let onDeleteMeal: (LoggedMealEntry) -> Void
 
     private let caloriesGoal = 2700
     private let carbsGoal = 250
@@ -189,6 +190,38 @@ private struct TodayView: View {
         caloriesGoal - totalCalories
     }
 
+    private var displayedCaloriesValue: Int {
+        remainingCalories < 0 ? abs(remainingCalories) : remainingCalories
+    }
+
+    private var caloriesProgress: CGFloat {
+        CGFloat(totalCalories) / CGFloat(caloriesGoal)
+    }
+
+    private var carbsProgress: CGFloat {
+        CGFloat(totalCarbs) / CGFloat(carbsGoal)
+    }
+
+    private var proteinProgress: CGFloat {
+        CGFloat(totalProtein) / CGFloat(proteinGoal)
+    }
+
+    private var fatsProgress: CGFloat {
+        CGFloat(totalFats) / CGFloat(fatsGoal)
+    }
+
+    private var caloriesSubtitle: String {
+        remainingCalories < 0 ? "Over" : "Remaining"
+    }
+
+    private var caloriesStatusColor: Color {
+        remainingCalories < 0 ? .red : .black
+    }
+
+    private var caloriesFillColor: Color {
+        remainingCalories < 0 ? .red : .green
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
@@ -202,12 +235,31 @@ private struct TodayView: View {
 
                 SummaryCard(
                     title: "Calories",
-                    valueText: "\(remainingCalories)",
-                    subtitle: "Remaining",
+                    valueText: "\(displayedCaloriesValue)",
+                    subtitle: caloriesSubtitle,
+                    valueColor: caloriesStatusColor,
+                    subtitleColor: caloriesStatusColor,
+                    topSectionProgress: caloriesProgress,
+                    topSectionFillColor: caloriesFillColor,
                     macros: [
-                        MacroStat(title: "Carbs", value: "\(totalCarbs)/\(carbsGoal)"),
-                        MacroStat(title: "Protein", value: "\(totalProtein)/\(proteinGoal)"),
-                        MacroStat(title: "Fats", value: "\(totalFats)/\(fatsGoal)")
+                        MacroStat(
+                            title: "Carbs",
+                            value: "\(totalCarbs) / \(carbsGoal)",
+                            progress: carbsProgress,
+                            fillColor: .brown
+                        ),
+                        MacroStat(
+                            title: "Protein",
+                            value: "\(totalProtein) / \(proteinGoal)",
+                            progress: proteinProgress,
+                            fillColor: .orange
+                        ),
+                        MacroStat(
+                            title: "Fats",
+                            value: "\(totalFats) / \(fatsGoal)",
+                            progress: fatsProgress,
+                            fillColor: .yellow
+                        )
                     ]
                 )
                 .padding(.bottom, loggedMeals.isEmpty ? 0 : 4)
@@ -216,45 +268,29 @@ private struct TodayView: View {
             .padding(.top, 12)
 
             if !loggedMeals.isEmpty {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("My Meals")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(.black)
-                            .padding(.top, 8)
-                            .padding(.bottom, 4)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("My Meals")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
 
+                    ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(loggedMeals) { entry in
-                                HStack(spacing: 0) {
-                                    Text(entry.meal.name)
-                                        .font(.title3)
-                                        .foregroundStyle(.black)
-                                        .padding(.horizontal, 16)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                                    Rectangle()
-                                        .fill(Color.black.opacity(0.05))
-                                        .frame(width: 1, height: 32)
-
-                                    Text(timeString(for: entry.addedAt))
-                                        .font(.subheadline)
-                                        .foregroundStyle(Color.black.opacity(0.7))
-                                        .frame(width: 72)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 56)
-                                .background(Color.white.opacity(0.5))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(Color.black.opacity(0.035), lineWidth: 1)
+                                LoggedMealRow(
+                                    entry: entry,
+                                    timeText: timeString(for: entry.addedAt),
+                                    onDelete: {
+                                        onDeleteMeal(entry)
+                                    }
                                 )
-                                .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
                             }
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 0)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 0)
                 }
             }
         }
@@ -300,11 +336,103 @@ private struct TodayView: View {
     }
 }
 
+private struct LoggedMealRow: View {
+    let entry: LoggedMealEntry
+    let timeText: String
+    let onDelete: () -> Void
+
+    @State private var horizontalOffset: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            let fadeThreshold = proxy.size.width * 0.25
+            let deleteThreshold = proxy.size.width * 0.5
+            let deleteProgress = min(abs(horizontalOffset) / fadeThreshold, 1)
+
+            ZStack {
+                HStack(spacing: 0) {
+                    Text(entry.meal.name)
+                        .font(.title3)
+                        .foregroundStyle(Color.black.opacity(1 - deleteProgress))
+                        .padding(.horizontal, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Rectangle()
+                        .fill(Color.black.opacity(0.05 * (1 - deleteProgress)))
+                        .frame(width: 1, height: 32)
+
+                    Text(timeText)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.black.opacity(0.7 * (1 - deleteProgress)))
+                        .frame(width: 72)
+                }
+                .frame(maxWidth: .infinity, minHeight: 56)
+                .background {
+                    Color.white.opacity(0.5)
+                    Color.red.opacity(0.38 * deleteProgress)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.black.opacity(0.035), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
+                .offset(x: horizontalOffset)
+
+                Image(systemName: "trash")
+                    .font(.title3)
+                    .foregroundStyle(Color.white.opacity(deleteProgress))
+                    .offset(x: horizontalOffset)
+            }
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        horizontalOffset = min(0, value.translation.width)
+                    }
+                    .onEnded { value in
+                        let shouldDelete = abs(value.translation.width) > deleteThreshold
+
+                        if shouldDelete {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                horizontalOffset = -proxy.size.width
+                            }
+                            onDelete()
+                        } else {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                                horizontalOffset = 0
+                            }
+                        }
+                    }
+            )
+        }
+        .frame(height: 56)
+    }
+}
+
 private struct MealDetailView: View {
     @Environment(\.dismiss) private var dismiss
+    @State private var gramsText = "100"
 
     let meal: MealItem
-    let onAdd: () -> Void
+    let onAdd: (MealItem) -> Void
+
+    private var gramsValue: Int {
+        max(Int(gramsText) ?? 0, 0)
+    }
+
+    private var scaleFactor: Double {
+        Double(gramsValue) / 100
+    }
+
+    private var scaledMeal: MealItem {
+        MealItem(
+            name: meal.name,
+            calories: scaledValue(meal.calories),
+            carbs: scaledValue(meal.carbs),
+            protein: scaledValue(meal.protein),
+            fats: scaledValue(meal.fats)
+        )
+    }
 
     var body: some View {
         VStack(spacing: 32) {
@@ -315,18 +443,20 @@ private struct MealDetailView: View {
 
             SummaryCard(
                 title: "Calories",
-                valueText: "\(meal.calories)",
+                valueText: "\(scaledMeal.calories)",
                 subtitle: nil,
+                topSectionProgress: 1,
+                topSectionFillColor: .green,
                 macros: [
-                    MacroStat(title: "Carbs", value: "\(meal.carbs)"),
-                    MacroStat(title: "Protein", value: "\(meal.protein)"),
-                    MacroStat(title: "Fats", value: "\(meal.fats)")
+                    MacroStat(title: "Carbs", value: "\(scaledMeal.carbs)", progress: 1, fillColor: .brown),
+                    MacroStat(title: "Protein", value: "\(scaledMeal.protein)", progress: 1, fillColor: .orange),
+                    MacroStat(title: "Fats", value: "\(scaledMeal.fats)", progress: 1, fillColor: .yellow)
                 ]
             )
 
             HStack(spacing: 0) {
                 Button {
-                    onAdd()
+                    onAdd(scaledMeal)
                     dismiss()
                 } label: {
                     Text("+")
@@ -335,10 +465,18 @@ private struct MealDetailView: View {
                         .foregroundStyle(.black)
                 }
 
-                Text("100")
+                TextField("100", text: $gramsText)
                     .font(.title2)
+                    .multilineTextAlignment(.center)
+                    .keyboardType(.numberPad)
                     .frame(width: 140, height: 64)
                     .foregroundStyle(.black)
+                    .onChange(of: gramsText) { _, newValue in
+                        let filteredValue = newValue.filter(\.isNumber)
+                        if filteredValue != newValue {
+                            gramsText = filteredValue
+                        }
+                    }
 
                 Text("g")
                     .font(.title2)
@@ -376,19 +514,49 @@ private struct MealDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
     }
+
+    private func scaledValue(_ value: Int) -> Int {
+        Int((Double(value) * scaleFactor).rounded())
+    }
 }
 
 private struct MacroStat: Identifiable {
     let id = UUID()
     let title: String
     let value: String
+    let progress: CGFloat
+    let fillColor: Color
 }
 
 private struct SummaryCard: View {
     let title: String
     let valueText: String
     let subtitle: String?
+    let valueColor: Color
+    let subtitleColor: Color
+    let topSectionProgress: CGFloat
+    let topSectionFillColor: Color
     let macros: [MacroStat]
+
+    init(
+        title: String,
+        valueText: String,
+        subtitle: String?,
+        valueColor: Color = .black,
+        subtitleColor: Color = .black,
+        topSectionProgress: CGFloat = 0,
+        topSectionFillColor: Color = .green,
+        macros: [MacroStat]
+    ) {
+        self.title = title
+        self.valueText = valueText
+        self.subtitle = subtitle
+        self.valueColor = valueColor
+        self.subtitleColor = subtitleColor
+        self.topSectionProgress = topSectionProgress
+        self.topSectionFillColor = topSectionFillColor
+        self.macros = macros
+    }
 
     private var topSectionHeight: CGFloat {
         subtitle == nil ? 150 : 170
@@ -402,19 +570,26 @@ private struct SummaryCard: View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
                 Text(title)
-                    .font(.title2)
+                    .font(.system(size: 22, weight: .semibold))
                 VStack(spacing: 8) {
                     Text(valueText)
                         .font(.system(size: 48, weight: .medium))
+                        .foregroundStyle(valueColor)
                     if let subtitle {
                         Text(subtitle)
                             .font(.body)
+                            .foregroundStyle(subtitleColor)
                     }
                 }
             }
             .frame(maxWidth: .infinity)
             .frame(height: topSectionHeight)
-            .background(Color.white)
+            .background {
+                ProgressFillBackground(
+                    progress: topSectionProgress,
+                    fillColor: topSectionFillColor
+                )
+            }
 
             Rectangle()
                 .frame(height: 1)
@@ -424,10 +599,13 @@ private struct SummaryCard: View {
                 ForEach(Array(macros.enumerated()), id: \.element.id) { index, macro in
                     VStack(spacing: 0) {
                         Text(macro.title)
-                            .font(.title3)
+                            .font(.system(size: 18, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .center)
                         Text(macro.value)
-                            .font(.system(size: 22, weight: .medium))
+                            .font(.system(size: 20, weight: .medium))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     }
                     .frame(
@@ -438,6 +616,12 @@ private struct SummaryCard: View {
                     )
                     .padding(.horizontal, 18)
                     .padding(.vertical, 10)
+                    .background {
+                        ProgressFillBackground(
+                            progress: macro.progress,
+                            fillColor: macro.fillColor
+                        )
+                    }
 
                     if index < macros.count - 1 {
                         Rectangle()
@@ -455,6 +639,23 @@ private struct SummaryCard: View {
                 .stroke(Color.black.opacity(0.18), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 6, x: 0, y: 2)
+    }
+}
+
+private struct ProgressFillBackground: View {
+    let progress: CGFloat
+    let fillColor: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Color.white
+
+                fillColor
+                    .opacity(0.24)
+                    .frame(width: proxy.size.width * max(0, min(progress, 1)))
+            }
+        }
     }
 }
 
