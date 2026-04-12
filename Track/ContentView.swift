@@ -346,7 +346,6 @@ private struct LoggedMealRow: View {
     var body: some View {
         GeometryReader { proxy in
             let fadeThreshold = proxy.size.width * 0.25
-            let deleteThreshold = proxy.size.width * 0.5
             let deleteProgress = min(abs(horizontalOffset) / fadeThreshold, 1)
 
             ZStack {
@@ -383,29 +382,39 @@ private struct LoggedMealRow: View {
                     .font(.title3)
                     .foregroundStyle(Color.white.opacity(deleteProgress))
                     .offset(x: horizontalOffset)
-            }
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        horizontalOffset = min(0, value.translation.width)
-                    }
-                    .onEnded { value in
-                        let shouldDelete = abs(value.translation.width) > deleteThreshold
 
-                        if shouldDelete {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                horizontalOffset = -proxy.size.width
-                            }
-                            onDelete()
-                        } else {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                                horizontalOffset = 0
-                            }
-                        }
-                    }
-            )
+                HStack {
+                    Spacer()
+                    Color.clear
+                        .frame(width: 72, height: 56)
+                        .contentShape(Rectangle())
+                        .gesture(swipeToDeleteGesture(rowWidth: proxy.size.width))
+                }
+            }
         }
         .frame(height: 56)
+    }
+
+    private func swipeToDeleteGesture(rowWidth: CGFloat) -> some Gesture {
+        DragGesture()
+            .onChanged { value in
+                horizontalOffset = min(0, value.translation.width)
+            }
+            .onEnded { value in
+                let deleteThreshold = rowWidth * 0.5
+                let shouldDelete = abs(value.translation.width) > deleteThreshold
+
+                if shouldDelete {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        horizontalOffset = -rowWidth
+                    }
+                    onDelete()
+                } else {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                        horizontalOffset = 0
+                    }
+                }
+            }
     }
 }
 
