@@ -38,8 +38,12 @@ struct ContentView: View {
 private struct AddMealView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedMeals: [MealItem] = []
+    @State private var searchText = ""
+    @State private var searchResults: [MealItem] = []
+    @State private var isSearching = false
+    @State private var searchError: String?
 
-    private let meals = SampleMeals.items
+    private let openFoodFactsClient = OpenFoodFactsClient()
     let onDone: ([MealItem]) -> Void
 
     var body: some View {
@@ -56,27 +60,31 @@ private struct AddMealView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(meals) { meal in
-                        NavigationLink {
-                            MealDetailView(meal: meal) { scaledMeal in
-                                selectedMeals.append(scaledMeal)
+                    if isSearching {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 24)
+                    } else if let searchError {
+                        Text(searchError)
+                            .font(.body)
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 24)
+                    } else if searchResults.isEmpty {
+                        Text(searchText.isEmpty ? "Search for a meal" : "No meals found")
+                            .font(.body)
+                            .foregroundStyle(Color.black.opacity(0.6))
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 24)
+                    } else {
+                        ForEach(searchResults) { meal in
+                            NavigationLink {
+                                MealDetailView(meal: meal) { scaledMeal in
+                                    selectedMeals.append(scaledMeal)
+                                }
+                            } label: {
+                                MealSearchResultRow(meal: meal)
                             }
-                        } label: {
-                            HStack(spacing: 16) {
-                                Text(meal.name)
-                                    .font(.title3)
-                                    .foregroundStyle(.black)
-                                Spacer()
-                            }
-                            .padding(.horizontal, 16)
-                            .frame(maxWidth: .infinity, minHeight: 56)
-                            .background(Color.white.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.black.opacity(0.035), lineWidth: 1)
-                            )
-                            .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
                         }
                     }
                 }
@@ -146,9 +154,16 @@ private struct AddMealView: View {
         HStack(spacing: 14) {
             Image(systemName: "magnifyingglass")
                 .font(.title3)
-            Text("Search")
+            TextField("Search", text: $searchText)
                 .font(.title3)
-            Spacer()
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+                .submitLabel(.search)
+                .onSubmit {
+                    Task {
+                        await searchMeals()
+                    }
+                }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 16)
@@ -157,6 +172,57 @@ private struct AddMealView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.black.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    private func searchMeals() async {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchResults = []
+            searchError = nil
+            return
+        }
+
+        isSearching = true
+        searchError = nil
+
+        do {
+            searchResults = try await openFoodFactsClient.searchMeals(matching: query)
+        } catch {
+            searchResults = []
+            searchError = error.localizedDescription
+        }
+
+        isSearching = false
+    }
+}
+
+private struct MealSearchResultRow: View {
+    let meal: MealItem
+
+    var body: some View {
+        HStack(spacing: 16) {
+            Text(meal.name)
+                .font(.title3)
+                .foregroundStyle(.black)
+                .lineLimit(2)
+
+            Spacer()
+
+            Text("\(meal.calories) kcal")
+                .font(.subheadline)
+                .foregroundStyle(Color.black.opacity(0.7))
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, minHeight: 56)
+        .background(Color.white.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.black.opacity(0.035), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
     }
 }
 
