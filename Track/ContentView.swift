@@ -881,16 +881,26 @@ private struct LoggedMealRow: View {
 private struct MealDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var gramsText = "100"
+    @State private var selectedMeasure: MealDetailMeasure = .grams
 
     let meal: MealItem
     let onAdd: (MealItem) -> Void
 
-    private var gramsValue: Int {
+    private var amountValue: Int {
         max(Int(gramsText) ?? 0, 0)
     }
 
+    private var gramsValue: Double {
+        switch selectedMeasure {
+        case .grams:
+            Double(amountValue)
+        case .productMeasure(let option):
+            Double(amountValue) * option.grams
+        }
+    }
+
     private var scaleFactor: Double {
-        Double(gramsValue) / 100
+        gramsValue / 100
     }
 
     private var scaledMeal: MealItem {
@@ -901,6 +911,10 @@ private struct MealDetailView: View {
             protein: scaledValue(meal.protein),
             fats: scaledValue(meal.fats)
         )
+    }
+
+    private var availableMeasures: [MealDetailMeasure] {
+        [.grams] + meal.measureOptions.map(MealDetailMeasure.productMeasure)
     }
 
     var body: some View {
@@ -938,7 +952,7 @@ private struct MealDetailView: View {
                     .font(.title2)
                     .multilineTextAlignment(.center)
                     .keyboardType(.numberPad)
-                    .frame(width: 140, height: 64)
+                    .frame(maxWidth: .infinity, minHeight: 64)
                     .foregroundStyle(.black)
                     .onChange(of: gramsText) { _, newValue in
                         let filteredValue = newValue.filter(\.isNumber)
@@ -947,11 +961,33 @@ private struct MealDetailView: View {
                         }
                     }
 
-                Text("g")
+                Menu {
+                    ForEach(availableMeasures) { measure in
+                        Button(measure.displayTitle) {
+                            selectMeasure(measure)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(selectedMeasure.displayTitle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+
+                        if !meal.measureOptions.isEmpty {
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption)
+                                .foregroundStyle(Color.black.opacity(0.55))
+                        }
+                    }
                     .font(.title2)
-                    .frame(width: 96, height: 64)
+                    .frame(width: 180, height: 64)
                     .foregroundStyle(.black)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(meal.measureOptions.isEmpty)
             }
+            .frame(maxWidth: .infinity)
             .background(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(
@@ -966,12 +1002,12 @@ private struct MealDetailView: View {
                         .fill(Color.black.opacity(0.12))
                         .frame(width: 1)
                     Spacer()
-                        .frame(width: 140)
+                        .frame(maxWidth: .infinity)
                     Rectangle()
                         .fill(Color.black.opacity(0.12))
                         .frame(width: 1)
                     Spacer()
-                        .frame(width: 96)
+                        .frame(width: 180)
                 }
             }
 
@@ -986,6 +1022,48 @@ private struct MealDetailView: View {
 
     private func scaledValue(_ value: Int) -> Int {
         Int((Double(value) * scaleFactor).rounded())
+    }
+
+    private func selectMeasure(_ measure: MealDetailMeasure) {
+        guard measure != selectedMeasure else {
+            return
+        }
+
+        switch (selectedMeasure, measure) {
+        case (.grams, .productMeasure):
+            gramsText = "1"
+        case (.productMeasure, .grams):
+            gramsText = "\(Int(gramsValue.rounded()))"
+        case (.productMeasure, .productMeasure):
+            gramsText = "1"
+        case (.grams, .grams):
+            break
+        }
+
+        selectedMeasure = measure
+    }
+}
+
+private enum MealDetailMeasure: Identifiable, Hashable {
+    case grams
+    case productMeasure(MealMeasureOption)
+
+    var id: String {
+        switch self {
+        case .grams:
+            "grams"
+        case .productMeasure(let option):
+            option.id
+        }
+    }
+
+    var displayTitle: String {
+        switch self {
+        case .grams:
+            "g"
+        case .productMeasure(let option):
+            option.displayTitle
+        }
     }
 }
 
