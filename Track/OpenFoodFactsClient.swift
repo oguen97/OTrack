@@ -65,7 +65,7 @@ struct OpenFoodFactsClient {
     private let fallbackURL = URL(string: "https://search.openfoodfacts.org/search")!
     private let pageSize = 50
     private let session: URLSession
-    private let productFields = "code,product_name,brands,quantity,serving_size,serving_quantity,nutriments,countries_tags"
+    private let productFields = "code,product_name,brands,quantity,serving_size,serving_quantity,nutriments"
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -82,10 +82,7 @@ struct OpenFoodFactsClient {
             URLQueryItem(name: "search_simple", value: "1"),
             URLQueryItem(name: "action", value: "process"),
             URLQueryItem(name: "json", value: "1"),
-            URLQueryItem(name: "fields", value: productFields),
-            URLQueryItem(name: "tagtype_0", value: "countries"),
-            URLQueryItem(name: "tag_contains_0", value: "contains"),
-            URLQueryItem(name: "tag_0", value: "germany")
+            URLQueryItem(name: "fields", value: productFields)
         ]
 
         do {
@@ -97,7 +94,6 @@ struct OpenFoodFactsClient {
                     from: fallbackURL,
                     queryItems: [
                         URLQueryItem(name: "q", value: trimmedQuery),
-                        URLQueryItem(name: "langs", value: "de"),
                         URLQueryItem(name: "fields", value: productFields)
                     ],
                     page: page
@@ -147,7 +143,6 @@ struct OpenFoodFactsClient {
         var seenIDs: Set<String> = []
 
         let meals = response.products
-            .filter(\.isAvailableInGermany)
             .compactMap(\.mealItem)
             .filter { meal in
                 seenIDs.insert(meal.id).inserted
@@ -268,7 +263,6 @@ private struct OpenFoodFactsProduct: Decodable {
     let quantity: FlexibleString?
     let servingSize: FlexibleString?
     let servingQuantity: FlexibleDouble?
-    let countriesTags: [String]?
     let nutriments: OpenFoodFactsNutriments?
 
     enum CodingKeys: String, CodingKey {
@@ -278,23 +272,9 @@ private struct OpenFoodFactsProduct: Decodable {
         case quantity
         case servingSize = "serving_size"
         case servingQuantity = "serving_quantity"
-        case countriesTags = "countries_tags"
         case nutriments
     }
 
-    var isAvailableInGermany: Bool {
-        guard let countriesTags else {
-            return true
-        }
-
-        return countriesTags.contains { countryTag in
-            let normalizedTag = countryTag.lowercased()
-            return normalizedTag == "en:germany"
-                || normalizedTag == "de:deutschland"
-                || normalizedTag == "germany"
-                || normalizedTag == "deutschland"
-        }
-    }
 
     var mealItem: MealItem? {
         guard let productName = productName?.value,
