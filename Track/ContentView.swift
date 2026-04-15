@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 private struct LoggedMealEntry: Identifiable {
@@ -41,9 +42,17 @@ private struct AddMealView: View {
     @State private var searchText = ""
     @State private var searchResults: [MealItem] = []
     @State private var isSearching = false
+    @State private var isLoadingMore = false
     @State private var searchError: String?
+    @State private var loadMoreError: String?
+    @State private var currentSearchQuery = ""
+    @State private var nextSearchPage: Int?
+    @State private var loadedMealIDs: Set<String> = []
+    @State private var lastSearchRequestDate: Date?
+    @State private var isShowingBarcodeScanner = false
 
     private let openFoodFactsClient = OpenFoodFactsClient()
+    private let minimumSearchRequestInterval: TimeInterval = 6
     let onDone: ([MealItem]) -> Void
 
     var body: some View {
@@ -85,6 +94,25 @@ private struct AddMealView: View {
                             } label: {
                                 MealSearchResultRow(meal: meal)
                             }
+                            .onAppear {
+                                if meal.id == searchResults.last?.id {
+                                    Task {
+                                        await loadMoreMealsIfNeeded()
+                                    }
+                                }
+                            }
+                        }
+
+                        if isLoadingMore {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                        } else if let loadMoreError {
+                            Text(loadMoreError)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 12)
                         }
                     }
                 }
@@ -94,6 +122,14 @@ private struct AddMealView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(.systemGroupedBackground))
+        .sheet(isPresented: $isShowingBarcodeScanner) {
+            BarcodeScannerSheet { barcode in
+                isShowingBarcodeScanner = false
+                Task {
+                    await findMeal(forBarcode: barcode)
+                }
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 LinearGradient(
@@ -164,6 +200,16 @@ private struct AddMealView: View {
                         await searchMeals()
                     }
                 }
+
+            Button {
+                isShowingBarcodeScanner = true
+            } label: {
+                Image(systemName: "barcode.viewfinder")
+                    .font(.title3)
+                    .foregroundStyle(.black)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 16)
@@ -179,20 +225,138 @@ private struct AddMealView: View {
         guard !query.isEmpty else {
             searchResults = []
             searchError = nil
+            loadMoreError = nil
+            nextSearchPage = nil
+            currentSearchQuery = ""
+            loadedMealIDs = []
+            return
+        }
+
+        guard !isSearching else {
             return
         }
 
         isSearching = true
+        isLoadingMore = false
         searchError = nil
+        loadMoreError = nil
+        currentSearchQuery = query
+        nextSearchPage = nil
+        loadedMealIDs = []
 
         do {
-            searchResults = try await openFoodFactsClient.searchMeals(matching: query)
+            try await waitForSearchRateLimit()
+            let page = try await openFoodFactsClient.searchMeals(matching: query)
+            searchResults = uniqueMeals(from: page.meals)
+            loadedMealIDs = Set(searchResults.map(\.id))
+            nextSearchPage = page.nextPage
+        } catch {
+            searchResults = []
+            searchError = error.localizedDescription
+            currentSearchQuery = ""
+            nextSearchPage = nil
+            loadedMealIDs = []
+        }
+
+        isSearching = false
+    }
+
+    private func findMeal(forBarcode barcode: String) async {
+        let trimmedBarcode = barcode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBarcode.isEmpty else {
+            return
+        }
+
+        isSearching = true
+        isLoadingMore = false
+        searchText = trimmedBarcode
+        searchError = nil
+        loadMoreError = nil
+        currentSearchQuery = ""
+        nextSearchPage = nil
+        loadedMealIDs = []
+
+        do {
+            if let meal = try await openFoodFactsClient.meal(forBarcode: trimmedBarcode) {
+                searchResults = [meal]
+                loadedMealIDs = [meal.id]
+            } else {
+                searchResults = []
+                searchError = "Kein Produkt mit vollständigen Nährwerten gefunden."
+            }
         } catch {
             searchResults = []
             searchError = error.localizedDescription
         }
 
         isSearching = false
+    }
+
+    private func loadMoreMealsIfNeeded() async {
+        guard let page = nextSearchPage,
+              !currentSearchQuery.isEmpty,
+              !isSearching,
+              !isLoadingMore else {
+            return
+        }
+
+        isLoadingMore = true
+        loadMoreError = nil
+
+        do {
+            var pageToLoad: Int? = page
+
+            while let page = pageToLoad {
+                try await waitForSearchRateLimit()
+                let searchPage = try await openFoodFactsClient.searchMeals(
+                    matching: currentSearchQuery,
+                    page: page
+                )
+                let appendedMealsCount = appendUniqueMeals(searchPage.meals)
+                nextSearchPage = searchPage.nextPage
+
+                if appendedMealsCount > 0 || searchPage.nextPage == nil {
+                    break
+                }
+
+                pageToLoad = searchPage.nextPage
+            }
+        } catch {
+            loadMoreError = error.localizedDescription
+        }
+
+        isLoadingMore = false
+    }
+
+    private func waitForSearchRateLimit() async throws {
+        if let lastSearchRequestDate {
+            let elapsedTime = Date().timeIntervalSince(lastSearchRequestDate)
+            let remainingDelay = minimumSearchRequestInterval - elapsedTime
+
+            if remainingDelay > 0 {
+                try await Task.sleep(nanoseconds: UInt64(remainingDelay * 1_000_000_000))
+            }
+        }
+
+        lastSearchRequestDate = Date()
+    }
+
+    private func uniqueMeals(from meals: [MealItem]) -> [MealItem] {
+        var seenIDs: Set<String> = []
+        return meals.filter { meal in
+            seenIDs.insert(meal.id).inserted
+        }
+    }
+
+    private func appendUniqueMeals(_ meals: [MealItem]) -> Int {
+        var appendedMealsCount = 0
+
+        for meal in meals where loadedMealIDs.insert(meal.id).inserted {
+            searchResults.append(meal)
+            appendedMealsCount += 1
+        }
+
+        return appendedMealsCount
     }
 }
 
@@ -223,6 +387,236 @@ private struct MealSearchResultRow: View {
                 .stroke(Color.black.opacity(0.035), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.012), radius: 2, x: 0, y: 1)
+    }
+}
+
+private struct BarcodeScannerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var isCameraAuthorized: Bool?
+
+    let onBarcodeScanned: (String) -> Void
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            scannerContent
+                .frame(maxWidth: .infinity)
+                .frame(maxHeight: .infinity, alignment: .center)
+
+            HStack {
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.title3)
+                        .foregroundStyle(.black)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+            }
+            .overlay {
+                Text("Scan Barcode")
+                    .font(.system(size: 34, weight: .medium))
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .background(Color(.systemGroupedBackground))
+        .task {
+            isCameraAuthorized = await requestCameraAccess()
+        }
+    }
+
+    @ViewBuilder
+    private var scannerContent: some View {
+        if isCameraAuthorized == true {
+            BarcodeScannerCameraView(onBarcodeScanned: onBarcodeScanned)
+                .frame(height: 260)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                }
+        } else if isCameraAuthorized == false {
+            Text("Camera access is required to scan barcodes.")
+                .font(.body)
+                .foregroundStyle(Color.black.opacity(0.7))
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+        } else {
+            ProgressView()
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func requestCameraAccess() async -> Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+
+        if status == .authorized {
+            return true
+        }
+
+        if status == .notDetermined {
+            return await AVCaptureDevice.requestAccess(for: .video)
+        }
+
+        return false
+    }
+}
+
+private struct BarcodeScannerCameraView: UIViewControllerRepresentable {
+    let onBarcodeScanned: (String) -> Void
+
+    func makeUIViewController(context: Context) -> BarcodeScannerViewController {
+        BarcodeScannerViewController(onBarcodeScanned: onBarcodeScanned)
+    }
+
+    func updateUIViewController(_ uiViewController: BarcodeScannerViewController, context: Context) {
+        uiViewController.onBarcodeScanned = onBarcodeScanned
+    }
+
+    static func dismantleUIViewController(_ uiViewController: BarcodeScannerViewController, coordinator: ()) {
+        uiViewController.stopScanning()
+    }
+}
+
+private final class BarcodeScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onBarcodeScanned: (String) -> Void
+
+    private let captureSession = AVCaptureSession()
+    private let sessionQueue = DispatchQueue(label: "Track.BarcodeScanner.SessionQueue")
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var didScanBarcode = false
+
+    init(onBarcodeScanned: @escaping (String) -> Void) {
+        self.onBarcodeScanned = onBarcodeScanned
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        configureCaptureSession()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.bounds
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        startScanning()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        stopScanning()
+    }
+
+    func startScanning() {
+        sessionQueue.async { [captureSession] in
+            if !captureSession.isRunning {
+                captureSession.startRunning()
+            }
+        }
+    }
+
+    func stopScanning() {
+        sessionQueue.async { [captureSession] in
+            if captureSession.isRunning {
+                captureSession.stopRunning()
+            }
+        }
+    }
+
+    private func configureCaptureSession() {
+        captureSession.beginConfiguration()
+        captureSession.sessionPreset = .high
+        defer {
+            captureSession.commitConfiguration()
+        }
+
+        guard let captureDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+            ?? AVCaptureDevice.default(for: .video),
+              let videoInput = try? AVCaptureDeviceInput(device: captureDevice),
+              captureSession.canAddInput(videoInput) else {
+            showScannerError("Camera is not available.")
+            return
+        }
+
+        captureSession.addInput(videoInput)
+
+        let metadataOutput = AVCaptureMetadataOutput()
+        guard captureSession.canAddOutput(metadataOutput) else {
+            showScannerError("Barcode scanning is not available.")
+            return
+        }
+
+        captureSession.addOutput(metadataOutput)
+        metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+
+        let supportedTypes: [AVMetadataObject.ObjectType] = [
+            .ean8,
+            .ean13,
+            .upce,
+            .code39,
+            .code39Mod43,
+            .code93,
+            .code128,
+            .itf14,
+            .interleaved2of5,
+            .qr,
+            .dataMatrix,
+            .pdf417,
+            .aztec
+        ]
+        let availableTypes = metadataOutput.availableMetadataObjectTypes
+        metadataOutput.metadataObjectTypes = supportedTypes.filter { availableTypes.contains($0) }
+
+        let previewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+        previewLayer.videoGravity = .resizeAspectFill
+        previewLayer.frame = view.bounds
+        view.layer.addSublayer(previewLayer)
+        self.previewLayer = previewLayer
+    }
+
+    private func showScannerError(_ message: String) {
+        let label = UILabel()
+        label.text = message
+        label.textColor = .white
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        ])
+    }
+
+    func metadataOutput(
+        _ output: AVCaptureMetadataOutput,
+        didOutput metadataObjects: [AVMetadataObject],
+        from connection: AVCaptureConnection
+    ) {
+        guard !didScanBarcode,
+              let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let barcode = metadataObject.stringValue else {
+            return
+        }
+
+        didScanBarcode = true
+        stopScanning()
+        onBarcodeScanned(barcode)
     }
 }
 

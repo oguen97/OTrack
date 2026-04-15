@@ -1,27 +1,50 @@
 import Foundation
 
 struct MealItem: Identifiable, Hashable {
-    let id = UUID()
+    let id: String
     let name: String
     let calories: Int
     let carbs: Int
     let protein: Int
     let fats: Int
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        calories: Int,
+        carbs: Int,
+        protein: Int,
+        fats: Int
+    ) {
+        self.id = id
+        self.name = name
+        self.calories = calories
+        self.carbs = carbs
+        self.protein = protein
+        self.fats = fats
+    }
+}
+
+struct MealSearchPage {
+    let meals: [MealItem]
+    let nextPage: Int?
 }
 
 struct OpenFoodFactsClient {
     private let baseURL = URL(string: "https://world.openfoodfacts.org/cgi/search.pl")!
+    private let productBaseURL = URL(string: "https://world.openfoodfacts.org/api/v2/product")!
     private let fallbackURL = URL(string: "https://search.openfoodfacts.org/search")!
+    private let pageSize = 50
     private let session: URLSession
 
     init(session: URLSession = .shared) {
         self.session = session
     }
 
-    func searchMeals(matching query: String) async throws -> [MealItem] {
+    func searchMeals(matching query: String, page: Int = 1) async throws -> MealSearchPage {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
-            return []
+            return MealSearchPage(meals: [], nextPage: nil)
         }
 
         let primaryQueryItems = [
@@ -29,23 +52,25 @@ struct OpenFoodFactsClient {
             URLQueryItem(name: "search_simple", value: "1"),
             URLQueryItem(name: "action", value: "process"),
             URLQueryItem(name: "json", value: "1"),
-            URLQueryItem(name: "page_size", value: "25"),
-            URLQueryItem(name: "fields", value: "product_name,brands,nutriments")
+            URLQueryItem(name: "fields", value: "code,product_name,brands,nutriments,countries_tags"),
+            URLQueryItem(name: "tagtype_0", value: "countries"),
+            URLQueryItem(name: "tag_contains_0", value: "contains"),
+            URLQueryItem(name: "tag_0", value: "germany")
         ]
 
         do {
-            return try await fetchMeals(from: baseURL, queryItems: primaryQueryItems)
+            return try await fetchMealPage(from: baseURL, queryItems: primaryQueryItems, page: page)
         } catch let error as OpenFoodFactsError {
             switch error {
             case .badStatusCode:
-                return try await fetchMeals(
+                return try await fetchMealPage(
                     from: fallbackURL,
                     queryItems: [
                         URLQueryItem(name: "q", value: trimmedQuery),
-                        URLQueryItem(name: "langs", value: "de,en"),
-                        URLQueryItem(name: "page_size", value: "50"),
-                        URLQueryItem(name: "fields", value: "product_name,brands,nutriments")
-                    ]
+                        URLQueryItem(name: "langs", value: "de"),
+                        URLQueryItem(name: "fields", value: "code,product_name,brands,nutriments,countries_tags")
+                    ],
+                    page: page
                 )
             case .invalidURL, .requestFailed:
                 throw error
@@ -53,7 +78,61 @@ struct OpenFoodFactsClient {
         }
     }
 
-    private func fetchMeals(from url: URL, queryItems: [URLQueryItem]) async throws -> [MealItem] {
+    func meal(forBarcode barcode: String) async throws -> MealItem? {
+        let trimmedBarcode = barcode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBarcode.isEmpty else {
+            return nil
+        }
+
+        let productURL = productBaseURL
+            .appending(path: trimmedBarcode)
+            .appendingPathExtension("json")
+
+        let response = try await fetchProductResponse(
+            from: productURL,
+            queryItems: [
+                URLQueryItem(name: "fields", value: "code,product_name,brands,nutriments,countries_tags")
+            ]
+        )
+
+        guard response.status == 1 else {
+            return nil
+        }
+
+        return response.product.mealItem
+    }
+
+    private func fetchMealPage(
+        from url: URL,
+        queryItems: [URLQueryItem],
+        page: Int
+    ) async throws -> MealSearchPage {
+        let response = try await fetchSearchResponse(
+            from: url,
+            queryItems: queryItems + [
+                URLQueryItem(name: "page", value: "\(page)"),
+                URLQueryItem(name: "page_size", value: "\(pageSize)")
+            ]
+        )
+        var seenIDs: Set<String> = []
+
+        let meals = response.products
+            .filter(\.isAvailableInGermany)
+            .compactMap(\.mealItem)
+            .filter { meal in
+                seenIDs.insert(meal.id).inserted
+            }
+
+        return MealSearchPage(
+            meals: meals,
+            nextPage: page < response.pageCount ? page + 1 : nil
+        )
+    }
+
+    private func fetchSearchResponse(
+        from url: URL,
+        queryItems: [URLQueryItem]
+    ) async throws -> OpenFoodFactsSearchResponse {
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         components?.queryItems = queryItems
 
@@ -75,8 +154,35 @@ struct OpenFoodFactsClient {
             throw OpenFoodFactsError.badStatusCode(httpResponse.statusCode)
         }
 
-        let searchResponse = try JSONDecoder().decode(OpenFoodFactsSearchResponse.self, from: data)
-        return searchResponse.products.compactMap(\.mealItem)
+        return try JSONDecoder().decode(OpenFoodFactsSearchResponse.self, from: data)
+    }
+
+    private func fetchProductResponse(
+        from url: URL,
+        queryItems: [URLQueryItem]
+    ) async throws -> OpenFoodFactsProductResponse {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.queryItems = queryItems
+
+        guard let url = components?.url else {
+            throw OpenFoodFactsError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue("Track/1.0 (contact: local-development)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenFoodFactsError.requestFailed
+        }
+
+        guard 200..<300 ~= httpResponse.statusCode else {
+            throw OpenFoodFactsError.badStatusCode(httpResponse.statusCode)
+        }
+
+        return try JSONDecoder().decode(OpenFoodFactsProductResponse.self, from: data)
     }
 }
 
@@ -103,10 +209,12 @@ enum OpenFoodFactsError: LocalizedError {
 
 private struct OpenFoodFactsSearchResponse: Decodable {
     let products: [OpenFoodFactsProduct]
+    let pageCount: Int
 
     enum CodingKeys: String, CodingKey {
         case products
         case hits
+        case pageCount = "page_count"
     }
 
     init(from decoder: Decoder) throws {
@@ -114,18 +222,42 @@ private struct OpenFoodFactsSearchResponse: Decodable {
         products = try container.decodeIfPresent([OpenFoodFactsProduct].self, forKey: .products)
             ?? container.decodeIfPresent([OpenFoodFactsProduct].self, forKey: .hits)
             ?? []
+        pageCount = max(try container.decodeIfPresent(Int.self, forKey: .pageCount) ?? 1, 1)
     }
 }
 
+private struct OpenFoodFactsProductResponse: Decodable {
+    let status: Int
+    let product: OpenFoodFactsProduct
+}
+
 private struct OpenFoodFactsProduct: Decodable {
+    let code: FlexibleString?
     let productName: FlexibleString?
     let brands: FlexibleString?
+    let countriesTags: [String]?
     let nutriments: OpenFoodFactsNutriments?
 
     enum CodingKeys: String, CodingKey {
+        case code
         case productName = "product_name"
         case brands
+        case countriesTags = "countries_tags"
         case nutriments
+    }
+
+    var isAvailableInGermany: Bool {
+        guard let countriesTags else {
+            return true
+        }
+
+        return countriesTags.contains { countryTag in
+            let normalizedTag = countryTag.lowercased()
+            return normalizedTag == "en:germany"
+                || normalizedTag == "de:deutschland"
+                || normalizedTag == "germany"
+                || normalizedTag == "deutschland"
+        }
     }
 
     var mealItem: MealItem? {
@@ -146,6 +278,7 @@ private struct OpenFoodFactsProduct: Decodable {
         }
 
         return MealItem(
+            id: code?.value ?? "\(productName)-\(trimmedBrand ?? "")",
             name: name,
             calories: Int(calories.rounded()),
             carbs: Int(carbs.rounded()),
