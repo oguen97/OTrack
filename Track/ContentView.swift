@@ -625,10 +625,10 @@ private struct TodayView: View {
     let onAddMeals: ([MealItem]) -> Void
     let onDeleteMeal: (LoggedMealEntry) -> Void
 
-    private let caloriesGoal = 2700
-    private let carbsGoal = 250
-    private let proteinGoal = 150
-    private let fatsGoal = 80
+    @AppStorage("caloriesGoal") private var caloriesGoal = 2700
+    @AppStorage("carbsGoal") private var carbsGoal = 250
+    @AppStorage("proteinGoal") private var proteinGoal = 150
+    @AppStorage("fatsGoal") private var fatsGoal = 80
 
     private var totalCalories: Int {
         loggedMeals.reduce(0) { $0 + $1.meal.calories }
@@ -693,35 +693,49 @@ private struct TodayView: View {
                         .font(.title3)
                 }
 
-                SummaryCard(
-                    title: "Calories",
-                    valueText: "\(displayedCaloriesValue)",
-                    subtitle: caloriesSubtitle,
-                    valueColor: caloriesStatusColor,
-                    subtitleColor: caloriesStatusColor,
-                    topSectionProgress: caloriesProgress,
-                    topSectionFillColor: caloriesFillColor,
-                    macros: [
-                        MacroStat(
-                            title: "Carbs",
-                            value: "\(totalCarbs) / \(carbsGoal)",
-                            progress: carbsProgress,
-                            fillColor: .brown
-                        ),
-                        MacroStat(
-                            title: "Protein",
-                            value: "\(totalProtein) / \(proteinGoal)",
-                            progress: proteinProgress,
-                            fillColor: .orange
-                        ),
-                        MacroStat(
-                            title: "Fats",
-                            value: "\(totalFats) / \(fatsGoal)",
-                            progress: fatsProgress,
-                            fillColor: .yellow
-                        )
-                    ]
-                )
+                ZStack(alignment: .topTrailing) {
+                    SummaryCard(
+                        title: "Calories",
+                        valueText: "\(displayedCaloriesValue)",
+                        subtitle: caloriesSubtitle,
+                        valueColor: caloriesStatusColor,
+                        subtitleColor: caloriesStatusColor,
+                        topSectionProgress: caloriesProgress,
+                        topSectionFillColor: caloriesFillColor,
+                        macros: [
+                            MacroStat(
+                                title: "Carbs",
+                                value: "\(totalCarbs) / \(carbsGoal)",
+                                progress: carbsProgress,
+                                fillColor: .brown
+                            ),
+                            MacroStat(
+                                title: "Protein",
+                                value: "\(totalProtein) / \(proteinGoal)",
+                                progress: proteinProgress,
+                                fillColor: .orange
+                            ),
+                            MacroStat(
+                                title: "Fats",
+                                value: "\(totalFats) / \(fatsGoal)",
+                                progress: fatsProgress,
+                                fillColor: .yellow
+                            )
+                        ]
+                    )
+
+                    NavigationLink {
+                        AdjustMacrosView()
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.title3)
+                            .foregroundStyle(.black)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(8)
+                }
                 .padding(.bottom, loggedMeals.isEmpty ? 0 : 4)
             }
             .padding(.horizontal, 20)
@@ -793,6 +807,215 @@ private struct TodayView: View {
 
     private func timeString(for date: Date) -> String {
         date.formatted(date: .omitted, time: .shortened)
+    }
+}
+
+private struct AdjustMacrosView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @AppStorage("caloriesGoal") private var caloriesGoal = 2700
+    @AppStorage("carbsGoal") private var carbsGoal = 250
+    @AppStorage("proteinGoal") private var proteinGoal = 150
+    @AppStorage("fatsGoal") private var fatsGoal = 80
+
+    @State private var draftCaloriesGoal = 2700
+    @State private var draftCarbsGoal = 250
+    @State private var draftProteinGoal = 150
+    @State private var draftFatsGoal = 80
+    @State private var editingMacro: AdjustableMacro?
+    @State private var editedValueText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 28) {
+            Text("Adjust")
+                .font(.system(size: 34, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+            SummaryCard(
+                title: "Calories",
+                valueText: "\(draftCaloriesGoal)",
+                subtitle: nil,
+                topSectionProgress: 1,
+                topSectionFillColor: .green,
+                topSectionAction: {
+                    startEditing(.calories)
+                },
+                macros: [
+                    MacroStat(
+                        title: "Carbs",
+                        value: "\(draftCarbsGoal)",
+                        progress: 1,
+                        fillColor: .brown,
+                        action: {
+                            startEditing(.carbs)
+                        }
+                    ),
+                    MacroStat(
+                        title: "Protein",
+                        value: "\(draftProteinGoal)",
+                        progress: 1,
+                        fillColor: .orange,
+                        action: {
+                            startEditing(.protein)
+                        }
+                    ),
+                    MacroStat(
+                        title: "Fats",
+                        value: "\(draftFatsGoal)",
+                        progress: 1,
+                        fillColor: .yellow,
+                        action: {
+                            startEditing(.fats)
+                        }
+                    )
+                ]
+            )
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Color(.systemGroupedBackground))
+        .onAppear {
+            loadDraftValues()
+        }
+        .alert(editingMacro?.title ?? "", isPresented: isShowingEditAlert) {
+            TextField("Target", text: $editedValueText)
+                .keyboardType(.numberPad)
+
+            Button("Cancel", role: .cancel) {
+                editingMacro = nil
+            }
+
+            Button("Save") {
+                applyEditedValue()
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        Color(.systemGroupedBackground).opacity(0),
+                        Color(.systemGroupedBackground).opacity(0.92),
+                        Color(.systemGroupedBackground)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 16)
+
+                Button {
+                    saveDraftValues()
+                    dismiss()
+                } label: {
+                    Text("Save")
+                        .font(.title3)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .padding(.horizontal, 18)
+                        .foregroundStyle(.black)
+                        .background(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                        )
+                }
+                .padding(.horizontal, 20)
+                .background(Color(.systemGroupedBackground))
+            }
+        }
+    }
+
+    private var isShowingEditAlert: Binding<Bool> {
+        Binding(
+            get: { editingMacro != nil },
+            set: { isPresented in
+                if !isPresented {
+                    editingMacro = nil
+                }
+            }
+        )
+    }
+
+    private func startEditing(_ macro: AdjustableMacro) {
+        editingMacro = macro
+        editedValueText = "\(value(for: macro))"
+    }
+
+    private func value(for macro: AdjustableMacro) -> Int {
+        switch macro {
+        case .calories:
+            draftCaloriesGoal
+        case .carbs:
+            draftCarbsGoal
+        case .protein:
+            draftProteinGoal
+        case .fats:
+            draftFatsGoal
+        }
+    }
+
+    private func applyEditedValue() {
+        guard let editingMacro,
+              let value = Int(editedValueText.filter(\.isNumber)),
+              value > 0 else {
+            self.editingMacro = nil
+            return
+        }
+
+        switch editingMacro {
+        case .calories:
+            draftCaloriesGoal = value
+        case .carbs:
+            draftCarbsGoal = value
+        case .protein:
+            draftProteinGoal = value
+        case .fats:
+            draftFatsGoal = value
+        }
+
+        self.editingMacro = nil
+    }
+
+    private func loadDraftValues() {
+        draftCaloriesGoal = caloriesGoal
+        draftCarbsGoal = carbsGoal
+        draftProteinGoal = proteinGoal
+        draftFatsGoal = fatsGoal
+    }
+
+    private func saveDraftValues() {
+        caloriesGoal = draftCaloriesGoal
+        carbsGoal = draftCarbsGoal
+        proteinGoal = draftProteinGoal
+        fatsGoal = draftFatsGoal
+    }
+}
+
+private enum AdjustableMacro: Identifiable {
+    case calories
+    case carbs
+    case protein
+    case fats
+
+    var id: Self {
+        self
+    }
+
+    var title: String {
+        switch self {
+        case .calories:
+            "Calories"
+        case .carbs:
+            "Carbs"
+        case .protein:
+            "Protein"
+        case .fats:
+            "Fats"
+        }
     }
 }
 
@@ -1073,6 +1296,21 @@ private struct MacroStat: Identifiable {
     let value: String
     let progress: CGFloat
     let fillColor: Color
+    let action: (() -> Void)?
+
+    init(
+        title: String,
+        value: String,
+        progress: CGFloat,
+        fillColor: Color,
+        action: (() -> Void)? = nil
+    ) {
+        self.title = title
+        self.value = value
+        self.progress = progress
+        self.fillColor = fillColor
+        self.action = action
+    }
 }
 
 private struct SummaryCard: View {
@@ -1083,6 +1321,7 @@ private struct SummaryCard: View {
     let subtitleColor: Color
     let topSectionProgress: CGFloat
     let topSectionFillColor: Color
+    let topSectionAction: (() -> Void)?
     let macros: [MacroStat]
 
     init(
@@ -1093,6 +1332,7 @@ private struct SummaryCard: View {
         subtitleColor: Color = .black,
         topSectionProgress: CGFloat = 0,
         topSectionFillColor: Color = .green,
+        topSectionAction: (() -> Void)? = nil,
         macros: [MacroStat]
     ) {
         self.title = title
@@ -1102,6 +1342,7 @@ private struct SummaryCard: View {
         self.subtitleColor = subtitleColor
         self.topSectionProgress = topSectionProgress
         self.topSectionFillColor = topSectionFillColor
+        self.topSectionAction = topSectionAction
         self.macros = macros
     }
 
@@ -1137,6 +1378,10 @@ private struct SummaryCard: View {
                     fillColor: topSectionFillColor
                 )
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                topSectionAction?()
+            }
 
             Rectangle()
                 .frame(height: 1)
@@ -1168,6 +1413,10 @@ private struct SummaryCard: View {
                             progress: macro.progress,
                             fillColor: macro.fillColor
                         )
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        macro.action?()
                     }
 
                     if index < macros.count - 1 {
